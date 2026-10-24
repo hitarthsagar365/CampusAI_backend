@@ -65,6 +65,10 @@ const UserSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: ''
+    },
+    avatar: {
+      type: String,
+      default: ''
     }
   },
   {
@@ -97,6 +101,7 @@ UserSchema.methods.toSafeObject = function () {
     semester: this.semester || '',
     classSection: this.classSection || this.section || '',
     assignedSubject: this.assignedSubject || '',
+    avatar: this.avatar || '',
     role: this.role === 'teacher' ? 'faculty' : this.role,
     createdAt: this.createdAt
   };
