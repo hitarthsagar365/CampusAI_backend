@@ -31,9 +31,26 @@ setupChatSocket(io);
 
 const cookieParser = require('cookie-parser');
 
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'https://campus-ai-frontend-five.vercel.app'
+].filter(Boolean).map(url => url.replace(/\/$/, ''));
+
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5174',
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    const normalized = origin.replace(/\/$/, '');
+    if (allowedOrigins.includes(normalized)) {
+      return callback(null, true);
+    }
+    return callback(null, true); // Allow dev access
+  },
   credentials: true
 }));
 app.use(cookieParser());
@@ -84,7 +101,7 @@ app.use('/api/assignments', protect, assignmentRoutes);
 app.use('/api/messages', protect, messageRoutes);
 app.use('/api/chat', protect, chatRoutes);
 app.use('/api/courses', protect, courseRoutes);
-app.use('/api/subjects', protect, subjectRoutes);
+app.use('/api/subjects', subjectRoutes);
 app.use('/api/classes', protect, classRoutes);
 
 // Health check route

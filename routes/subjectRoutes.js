@@ -7,12 +7,15 @@ const {
   updateSubject,
   deleteSubject
 } = require('../controllers/academicController');
-const { requireRole } = require('../middleware/auth');
+const { protect, requireRole } = require('../middleware/auth');
 
+// Public/Open route so registration form and admin can both fetch subjects
 router.get('/', getSubjects);
 router.get('/:id', getSubjectById);
-router.post('/', requireRole('admin'), createSubject);
-router.put('/:id', requireRole('admin'), updateSubject);
-router.delete('/:id', requireRole('admin'), deleteSubject);
+
+// Admin-only protected mutation routes
+router.post('/', protect, requireRole('admin'), createSubject);
+router.put('/:id', protect, requireRole('admin'), updateSubject);
+router.delete('/:id', protect, requireRole('admin'), deleteSubject);
 
 module.exports = router;
