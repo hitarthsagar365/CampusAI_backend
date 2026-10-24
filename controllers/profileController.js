@@ -39,6 +39,13 @@ const uploadToCloudinary = (buffer, userId) => {
  */
 exports.uploadProfilePicture = async (req, res) => {
   try {
+    if (!cloudinary) {
+      return res.status(500).json({
+        success: false,
+        message: 'Cloudinary is not installed or configured. Please run "npm install cloudinary" in the backend directory.'
+      });
+    }
+
     if (!req.file) {
       return res.status(400).json({
         success: false,

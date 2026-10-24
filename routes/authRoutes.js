@@ -31,23 +31,43 @@ const handleAvatarUpload = (req, res, next) => {
   });
 };
 
-// Public authentication routes (Must be POST with JSON body)
+// Helper to support both POST and query-based GET logins, while preventing 404s
+const loginWithFallback = (controllerFn) => (req, res) => {
+  if (req.method === 'GET') {
+    if (req.query.identifier || req.query.email || req.query.username || req.query.enrollment) {
+      req.body = { ...req.query, ...req.body };
+      return controllerFn(req, res);
+    }
+    return res.status(405).json({
+      success: false,
+      message: `Method Not Allowed: ${req.method} ${req.originalUrl}. Login requires an HTTP POST request with user credentials (email/enrollment/username & password) in the JSON body.`
+    });
+  }
+  return controllerFn(req, res);
+};
+
+// Public authentication routes
 router.post('/register-student', registerStudent);
 router.post('/register-faculty', registerFaculty);
-router.post('/login', login);
-router.post('/login/admin', loginAdmin);
-router.post('/login/faculty', loginFaculty);
-router.post('/login/student', loginStudent);
+
+router.route('/login')
+  .post(login)
+  .get(loginWithFallback(login));
+
+router.route('/login/admin')
+  .post(loginAdmin)
+  .get(loginWithFallback(loginAdmin));
+
+router.route('/login/faculty')
+  .post(loginFaculty)
+  .get(loginWithFallback(loginFaculty));
+
+router.route('/login/student')
+  .post(loginStudent)
+  .get(loginWithFallback(loginStudent));
+
 router.post('/refresh', refresh);
 router.post('/logout', logout);
-
-// Informative fallback for accidental GET requests to login endpoints (e.g. browser navigation)
-router.get(['/login', '/login/admin', '/login/faculty', '/login/student'], (req, res) => {
-  return res.status(405).json({
-    success: false,
-    message: `Method Not Allowed: ${req.method} ${req.originalUrl}. Login requires an HTTP POST request with user credentials (email/enrollment/username & password) in the JSON body.`
-  });
-});
 
 // Protected routes (require valid JWT access token)
 router.get('/me', authMiddleware, getMe);
