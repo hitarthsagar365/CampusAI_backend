@@ -31,7 +31,7 @@ const handleAvatarUpload = (req, res, next) => {
   });
 };
 
-// Public authentication routes
+// Public authentication routes (Must be POST with JSON body)
 router.post('/register-student', registerStudent);
 router.post('/register-faculty', registerFaculty);
 router.post('/login', login);
@@ -40,6 +40,14 @@ router.post('/login/faculty', loginFaculty);
 router.post('/login/student', loginStudent);
 router.post('/refresh', refresh);
 router.post('/logout', logout);
+
+// Informative fallback for accidental GET requests to login endpoints (e.g. browser navigation)
+router.get(['/login', '/login/admin', '/login/faculty', '/login/student'], (req, res) => {
+  return res.status(405).json({
+    success: false,
+    message: `Method Not Allowed: ${req.method} ${req.originalUrl}. Login requires an HTTP POST request with user credentials (email/enrollment/username & password) in the JSON body.`
+  });
+});
 
 // Protected routes (require valid JWT access token)
 router.get('/me', authMiddleware, getMe);
