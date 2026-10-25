@@ -39,13 +39,19 @@ const SubjectSchema = new mongoose.Schema(
   }
 );
 
-// Pre-save hook: sync course and dept if one is provided
+// Pre-save hook: sync course and dept if one is provided, and normalize semester
 SubjectSchema.pre('save', function (next) {
   if (!this.course && this.dept && this.dept !== 'All Departments') {
     this.course = this.dept;
   }
   if ((!this.dept || this.dept === 'All Departments') && this.course) {
     this.dept = this.course;
+  }
+  if (this.semester !== undefined && this.semester !== null && typeof this.semester === 'string') {
+    const parsed = parseInt(String(this.semester).replace(/\D/g, ''), 10);
+    if (!isNaN(parsed)) {
+      this.semester = parsed;
+    }
   }
   next();
 });

@@ -91,33 +91,57 @@ exports.deleteCourse = async (req, res) => {
 };
 
 // --- SUBJECTS ---
-// @desc    Get all subjects (dynamically filterable by course or dept)
-// @route   GET /api/subjects?course=CyberSecurity
+// @desc    Get all subjects (dynamically filterable by course and semester)
+// @route   GET /api/subjects?course=AIML&semester=3
 // @access  Public
 exports.getSubjects = async (req, res) => {
   try {
     const { dept, course, semester } = req.query;
     const filterCourse = (course || dept || '').trim();
-    let query = {};
+    const filterSemester = semester !== undefined && semester !== null ? String(semester).trim() : '';
 
+    const conditions = [];
+
+    // 1. Course Filter (e.g. AIML, Cyber Security)
     if (filterCourse && filterCourse !== 'All' && filterCourse !== 'All Departments') {
-      // Allow flexible match for spaces and casings, e.g. "CyberSecurity" matches "Cyber Security"
       const cleaned = filterCourse.replace(/[^a-zA-Z0-9]/g, '');
       const pattern = cleaned ? cleaned.split('').join('\\s*') : filterCourse;
       const courseRegex = new RegExp(`^${pattern}$`, 'i');
 
-      query.$or = [
-        { course: courseRegex },
-        { dept: { $in: [courseRegex, 'All Departments', 'All'] } },
-        { course: 'All Departments' }
-      ];
+      conditions.push({
+        $or: [
+          { course: courseRegex },
+          { dept: courseRegex },
+          { course: 'All Departments' },
+          { dept: 'All Departments' },
+          { course: 'All' },
+          { dept: 'All' }
+        ]
+      });
     }
 
-    if (semester) {
-      query.semester = Number(semester);
+    // 2. Semester Filter (e.g. 1, 2, 3, or "Semester 3")
+    if (filterSemester && filterSemester !== 'All') {
+      const semNum = parseInt(filterSemester.replace(/\D/g, ''), 10);
+      if (!isNaN(semNum) && semNum > 0) {
+        conditions.push({
+          $or: [
+            { semester: semNum },
+            { semester: String(semNum) },
+            { semester: `Semester ${semNum}` },
+            { semester: new RegExp(`^\\s*semester\\s*${semNum}\\s*$`, 'i') }
+          ]
+        });
+      }
     }
 
-    const subjects = await Subject.find(query).sort({ code: 1, name: 1, createdAt: -1 });
+    const query = conditions.length === 1
+      ? conditions[0]
+      : conditions.length > 1
+      ? { $and: conditions }
+      : {};
+
+    const subjects = await Subject.find(query).sort({ semester: 1, code: 1, name: 1, createdAt: -1 });
     res.status(200).json({ success: true, count: subjects.length, data: subjects });
   } catch (error) {
     console.error('Error fetching subjects:', error);
