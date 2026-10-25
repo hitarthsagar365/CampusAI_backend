@@ -1,153 +1,136 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 
-// Fallback model list — tries each in order if the previous is unavailable
-const FALLBACK_MODELS = [
-  process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+// Base URL for Google Generative Language REST API
+const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+// Ordered fallback models — first available one wins
+const MODELS = [
   'gemini-3.8-flash',
   'gemini-2.5-flash',
   'gemini-2.5-flash-preview-05-20',
-  'gemini-2.0-flash-exp',
+  'gemini-1.5-flash-latest',
   'gemini-pro',
 ];
 
-// Remove duplicates while preserving order
-const getModelList = () => [...new Set(FALLBACK_MODELS)];
-
 const buildSystemContext = (role) =>
-  `You are a helpful assistant for CampusAI, a college management platform. You help users navigate and use the CampusAI application.
+  `You are a helpful assistant for CampusAI, a college management platform. You help users navigate the application.
 
-The platform has THREE roles:
-1. STUDENT: Can view dashboard (attendance summary, assignments, notices, events, timetable), check subject-wise attendance, submit and view assignments, see marks/grades, access study materials/notes, send messages to faculty, manage profile and settings.
-2. TEACHER (Faculty): Can view dashboard, manage classes, create and manage assignments, mark student attendance, enter marks in gradebook, upload study materials, post announcements/notices, send messages to students, manage profile and settings.
-3. ADMIN: Can manage the entire platform — add/remove students and faculty, manage courses and subjects, manage classes, view/edit attendance and marks, publish notices and events, manage materials and assignments, create and send timetables, and view all messages.
+Roles:
+- STUDENT: Dashboard, attendance, assignments, marks, notes/materials, messages to faculty, profile, settings.
+- TEACHER: Dashboard, manage classes, create assignments, mark attendance, gradebook, upload materials, notices, messages.
+- ADMIN: Full platform control — manage students/faculty/courses/subjects/classes, attendance, marks, notices, events, materials, assignments, timetables, messages.
 
-The current user is a ${role.toUpperCase()}.
-
-Guidelines:
-- Only answer questions about the CampusAI application and its features.
-- If asked something outside CampusAI scope, politely say you can only help with the CampusAI platform.
-- Keep answers concise, clear, and actionable.
-- Use bullet points for steps when helpful.
-- Do not make up features that do not exist in the platform.`;
+Current user is a ${role.toUpperCase()}.
+Only answer questions about CampusAI features. Keep answers concise and use bullet points for steps.`;
 
 /**
- * Try each model in the fallback list until one succeeds.
- * Returns { reply, modelUsed } on success or throws the last error.
+ * Call Gemini REST API directly using axios with a hard timeout.
+ * Avoids SDK hanging indefinitely on overloaded models.
  */
-const tryWithFallback = async (apiKey, systemContext, chatHistory, message) => {
-  const models = getModelList();
-  let lastError;
+const callGemini = async (apiKey, modelName, systemContext, chatHistory, message) => {
+  const url = `${GEMINI_BASE}/${modelName}:generateContent?key=${apiKey}`;
 
-  for (const modelName of models) {
-    try {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        systemInstruction: systemContext,
-      });
+  // Build contents array: system prompt as first user turn if history is empty
+  const contents = [];
 
-      const chat = model.startChat({ history: chatHistory });
-      const result = await chat.sendMessage(message);
-      const reply = result.response.text();
-
-      return { reply, modelUsed: modelName };
-    } catch (err) {
-      const status = err?.message || '';
-      const isRetryable =
-        status.includes('503') ||
-        status.includes('overload') ||
-        status.includes('unavailable') ||
-        status.includes('high demand') ||
-        status.includes('404') ||
-        status.includes('not found') ||
-        status.includes('no longer available');
-
-      console.warn(`[AI Chatbot] Model "${modelName}" failed: ${err?.message}`);
-      lastError = err;
-
-      if (!isRetryable) {
-        // Non-retryable error (e.g. bad API key, billing) — stop immediately
-        throw err;
-      }
-      // Retryable — try next model
-    }
+  // Add prior conversation turns
+  for (const h of chatHistory) {
+    contents.push({
+      role: h.role === 'user' ? 'user' : 'model',
+      parts: [{ text: h.text }],
+    });
   }
 
-  throw lastError;
+  // Add current user message
+  contents.push({ role: 'user', parts: [{ text: message }] });
+
+  const body = {
+    systemInstruction: { parts: [{ text: systemContext }] },
+    contents,
+    generationConfig: {
+      maxOutputTokens: 512,
+      temperature: 0.7,
+    },
+  };
+
+  // 12-second hard timeout per model — prevents hanging
+  const response = await axios.post(url, body, { timeout: 12000 });
+  const reply = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+  if (!reply) throw new Error('Empty response from model');
+  return reply;
 };
 
 /**
  * POST /api/ai-chatbot/ask
- * Body: { message: string, role: 'student' | 'teacher' | 'admin', history: [{role, text}] }
  */
 const askChatbot = async (req, res) => {
-  try {
-    const { message, role = 'student', history = [] } = req.body;
+  const { message, role = 'student', history = [] } = req.body;
 
-    if (!message || !message.trim()) {
-      return res.status(400).json({ success: false, message: 'Message is required.' });
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({
-        success: false,
-        message: 'AI service is not configured. GEMINI_API_KEY is missing.',
-      });
-    }
-
-    const systemContext = buildSystemContext(role);
-
-    const chatHistory = history.map((h) => ({
-      role: h.role === 'user' ? 'user' : 'model',
-      parts: [{ text: h.text }],
-    }));
-
-    const { reply, modelUsed } = await tryWithFallback(
-      apiKey,
-      systemContext,
-      chatHistory,
-      message.trim()
-    );
-
-    console.log(`[AI Chatbot] Responded using model: ${modelUsed}`);
-
-    return res.status(200).json({ success: true, reply });
-  } catch (error) {
-    console.error('AI Chatbot Error (all models failed):', error?.message || error);
-    return res.status(500).json({
-      success: false,
-      message: 'AI service is currently unavailable. Please try again in a moment.',
-    });
+  if (!message || !message.trim()) {
+    return res.status(400).json({ success: false, message: 'Message is required.' });
   }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ success: false, message: 'GEMINI_API_KEY is not configured.' });
+  }
+
+  const systemContext = buildSystemContext(role);
+  const chatHistory = history.map((h) => ({
+    role: h.role === 'user' ? 'user' : 'model',
+    text: h.text,
+  }));
+
+  let lastError;
+  for (const modelName of MODELS) {
+    try {
+      const reply = await callGemini(apiKey, modelName, systemContext, chatHistory, message.trim());
+      console.log(`[AI Chatbot] OK — model: ${modelName}`);
+      return res.status(200).json({ success: true, reply });
+    } catch (err) {
+      const status = err?.response?.status;
+      const msg = err?.message || '';
+      console.warn(`[AI Chatbot] Model "${modelName}" failed (${status || 'timeout'}): ${msg}`);
+      lastError = err;
+
+      // Stop immediately for auth/billing errors — retrying won't help
+      if (status === 400 || status === 401 || status === 403) break;
+      // For 404 / 503 / timeout — try next model
+    }
+  }
+
+  console.error('[AI Chatbot] All models failed:', lastError?.message);
+  return res.status(500).json({
+    success: false,
+    message: 'AI service is temporarily unavailable. Please try again in a moment.',
+  });
 };
 
 /**
- * GET /api/ai-chatbot/test
- * Open diagnostic — tests each model and reports which one works.
+ * GET /api/ai-chatbot/test  (public, no auth)
+ * Tests each model with a 10s timeout and reports results.
  */
 const testChatbot = async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY;
-
   if (!apiKey) {
-    return res.status(500).json({
-      success: false,
-      step: 'env_check',
-      message: 'GEMINI_API_KEY is not set in environment variables.',
-    });
+    return res.status(500).json({ success: false, message: 'GEMINI_API_KEY not set.' });
   }
 
   const results = [];
-  const models = getModelList();
 
-  for (const modelName of models) {
+  for (const modelName of MODELS) {
     try {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const result = await model.generateContent('Say "OK" and nothing else.');
-      const text = result.response.text();
+      const url = `${GEMINI_BASE}/${modelName}:generateContent?key=${apiKey}`;
+      const body = {
+        contents: [{ role: 'user', parts: [{ text: 'Say OK' }] }],
+        generationConfig: { maxOutputTokens: 10 },
+      };
+      const response = await axios.post(url, body, { timeout: 10000 });
+      const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '(empty)';
       results.push({ model: modelName, status: 'ok', reply: text });
-      // Found a working model — stop here
+
+      // First working model found — return success immediately
       return res.status(200).json({
         success: true,
         keyPrefix: apiKey.substring(0, 8) + '...',
@@ -155,7 +138,9 @@ const testChatbot = async (req, res) => {
         results,
       });
     } catch (err) {
-      results.push({ model: modelName, status: 'error', error: err?.message });
+      const status = err?.response?.status || 'timeout';
+      const error = err?.response?.data?.error?.message || err?.message || 'unknown';
+      results.push({ model: modelName, status: `error_${status}`, error });
     }
   }
 
