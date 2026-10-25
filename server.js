@@ -76,6 +76,7 @@ const analyticsRoutes = require('./routes/analyticsRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const facultyRoutes = require('./routes/facultyRoutes');
 const aiChatbotRoutes = require('./routes/aiChatbotRoutes');
+const { testChatbot } = require('./controllers/aiChatbotController');
 
 // Middleware for route protection
 const { protect } = require('./middleware/auth');
@@ -104,7 +105,7 @@ app.use('/api/chat', protect, chatRoutes);
 app.use('/api/courses', protect, courseRoutes);
 app.use('/api/subjects', subjectRoutes);
 app.use('/api/classes', protect, classRoutes);
-app.use('/api/ai-chatbot/test', aiChatbotRoutes);   // public — diagnostic only
+app.get('/api/ai-chatbot/test', testChatbot);        // public — diagnostic, no auth
 app.use('/api/ai-chatbot', protect, aiChatbotRoutes); // protected — actual chatbot
 
 // Health check route
