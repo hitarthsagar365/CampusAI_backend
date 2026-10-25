@@ -16,18 +16,17 @@ const askChatbot = async (req, res) => {
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ success: false, message: 'AI service is not configured. Please set GEMINI_API_KEY.' });
+      return res.status(500).json({
+        success: false,
+        message: 'AI service is not configured. Please set GEMINI_API_KEY.',
+      });
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-1.5-flash' });
-
     // System context — scopes the AI strictly to CampusAI features
-    const systemContext = `You are a helpful assistant for CampusAI, a college management platform.
-You help users navigate and use the CampusAI application.
+    const systemContext = `You are a helpful assistant for CampusAI, a college management platform. You help users navigate and use the CampusAI application.
 
 The platform has THREE roles:
-1. STUDENT: Can view dashboard (attendance summary, assignments, notices, events, timetable), check attendance by subject, submit and view assignments, see marks/grades, access study materials/notes, send messages to faculty, manage profile and settings.
+1. STUDENT: Can view dashboard (attendance summary, assignments, notices, events, timetable), check subject-wise attendance, submit and view assignments, see marks/grades, access study materials/notes, send messages to faculty, manage profile and settings.
 2. TEACHER (Faculty): Can view dashboard, manage classes, create and manage assignments, mark student attendance, enter marks in gradebook, upload study materials, post announcements/notices, send messages to students, manage profile and settings.
 3. ADMIN: Can manage the entire platform — add/remove students and faculty, manage courses and subjects, manage classes, view/edit attendance and marks, publish notices and events, manage materials and assignments, create and send timetables, and view all messages.
 
@@ -35,10 +34,18 @@ The current user is a ${role.toUpperCase()}.
 
 Guidelines:
 - Only answer questions about the CampusAI application and its features.
-- If asked something outside CampusAI scope, politely redirect to app-related help.
+- If asked something outside CampusAI scope, politely say you can only help with the CampusAI platform.
 - Keep answers concise, clear, and actionable.
 - Use bullet points for steps when helpful.
-- Do not make up features that don't exist.`;
+- Do not make up features that do not exist in the platform.`;
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+
+    // Pass systemInstruction at model level — correct for SDK v0.21+ including v0.24
+    const model = genAI.getGenerativeModel({
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+      systemInstruction: systemContext,
+    });
 
     // Build conversation history for multi-turn context
     const chatHistory = history.map((h) => ({
@@ -48,7 +55,6 @@ Guidelines:
 
     const chat = model.startChat({
       history: chatHistory,
-      systemInstruction: systemContext,
     });
 
     const result = await chat.sendMessage(message.trim());
