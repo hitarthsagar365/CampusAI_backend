@@ -3,8 +3,6 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 /**
  * POST /api/ai-chatbot/ask
  * Body: { message: string, role: 'student' | 'teacher' | 'admin', history: [{role, text}] }
- *
- * Calls Google Gemini API and returns an AI response scoped to the CampusAI application.
  */
 const askChatbot = async (req, res) => {
   try {
@@ -18,11 +16,10 @@ const askChatbot = async (req, res) => {
     if (!apiKey) {
       return res.status(500).json({
         success: false,
-        message: 'AI service is not configured. Please set GEMINI_API_KEY.',
+        message: 'AI service is not configured. GEMINI_API_KEY is missing.',
       });
     }
 
-    // System context — scopes the AI strictly to CampusAI features
     const systemContext = `You are a helpful assistant for CampusAI, a college management platform. You help users navigate and use the CampusAI application.
 
 The platform has THREE roles:
@@ -41,37 +38,72 @@ Guidelines:
 
     const genAI = new GoogleGenerativeAI(apiKey);
 
-    // Pass systemInstruction at model level — correct for SDK v0.21+ including v0.24
     const model = genAI.getGenerativeModel({
       model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
       systemInstruction: systemContext,
     });
 
-    // Build conversation history for multi-turn context
     const chatHistory = history.map((h) => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.text }],
     }));
 
-    const chat = model.startChat({
-      history: chatHistory,
-    });
+    const chat = model.startChat({ history: chatHistory });
 
     const result = await chat.sendMessage(message.trim());
     const responseText = result.response.text();
 
-    return res.status(200).json({
-      success: true,
-      reply: responseText,
-    });
+    return res.status(200).json({ success: true, reply: responseText });
 
   } catch (error) {
-    console.error('AI Chatbot Error:', error?.message || error);
+    // Log full error on server for debugging
+    console.error('AI Chatbot Error:', error);
     return res.status(500).json({
       success: false,
       message: 'Failed to get AI response. Please try again.',
+      // Return actual error in non-production so you can debug
+      debug: process.env.NODE_ENV !== 'production' ? (error?.message || String(error)) : undefined,
     });
   }
 };
 
-module.exports = { askChatbot };
+/**
+ * GET /api/ai-chatbot/test
+ * Quick check: is the API key set and does a simple Gemini call work?
+ */
+const testChatbot = async (req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+
+  if (!apiKey) {
+    return res.status(500).json({
+      success: false,
+      step: 'env_check',
+      message: 'GEMINI_API_KEY is not set in environment variables.',
+    });
+  }
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: modelName });
+    const result = await model.generateContent('Say "CampusAI OK" and nothing else.');
+    const text = result.response.text();
+
+    return res.status(200).json({
+      success: true,
+      model: modelName,
+      keyPrefix: apiKey.substring(0, 8) + '...',
+      reply: text,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      step: 'gemini_call',
+      model: modelName,
+      keyPrefix: apiKey.substring(0, 8) + '...',
+      error: error?.message || String(error),
+    });
+  }
+};
+
+module.exports = { askChatbot, testChatbot };

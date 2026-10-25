@@ -104,7 +104,8 @@ app.use('/api/chat', protect, chatRoutes);
 app.use('/api/courses', protect, courseRoutes);
 app.use('/api/subjects', subjectRoutes);
 app.use('/api/classes', protect, classRoutes);
-app.use('/api/ai-chatbot', protect, aiChatbotRoutes);
+app.use('/api/ai-chatbot/test', aiChatbotRoutes);   // public — diagnostic only
+app.use('/api/ai-chatbot', protect, aiChatbotRoutes); // protected — actual chatbot
 
 // Health check route
 app.get('/api/health', (req, res) => {
