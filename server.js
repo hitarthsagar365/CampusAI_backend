@@ -75,6 +75,7 @@ const searchRoutes = require('./routes/searchRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const facultyRoutes = require('./routes/facultyRoutes');
+const teacherRoutes = require('./routes/teacherRoutes');
 const aiChatbotRoutes = require('./routes/aiChatbotRoutes');
 const { testChatbot, listModels } = require('./controllers/aiChatbotController');
 
@@ -90,6 +91,7 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/students', protect, studentRoutes);
 app.use('/api/faculty', protect, facultyRoutes);
+app.use('/api/teacher', protect, teacherRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/timetable', protect, timetableRoutes);
 app.use('/api/notices', protect, noticeRoutes);

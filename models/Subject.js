@@ -14,13 +14,24 @@ const SubjectSchema = new mongoose.Schema(
     },
     dept: {
       type: String,
-      enum: ['AIML', 'Cyber Security', 'All Departments'],
-      default: 'All Departments'
+      default: 'All Departments',
+      trim: true
+    },
+    course: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    semester: {
+      type: Number,
+      min: 1,
+      max: 8
     },
     type: {
       type: String,
       required: [true, 'Subject type is required'],
-      trim: true
+      trim: true,
+      default: 'Core'
     }
   },
   {
@@ -28,4 +39,15 @@ const SubjectSchema = new mongoose.Schema(
   }
 );
 
-module.exports = mongoose.model('Subject', SubjectSchema);
+// Pre-save hook: sync course and dept if one is provided
+SubjectSchema.pre('save', function (next) {
+  if (!this.course && this.dept && this.dept !== 'All Departments') {
+    this.course = this.dept;
+  }
+  if ((!this.dept || this.dept === 'All Departments') && this.course) {
+    this.dept = this.course;
+  }
+  next();
+});
+
+module.exports = mongoose.models.Subject || mongoose.model('Subject', SubjectSchema);

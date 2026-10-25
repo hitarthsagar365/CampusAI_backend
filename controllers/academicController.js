@@ -91,14 +91,33 @@ exports.deleteCourse = async (req, res) => {
 };
 
 // --- SUBJECTS ---
+// @desc    Get all subjects (dynamically filterable by course or dept)
+// @route   GET /api/subjects?course=CyberSecurity
+// @access  Public
 exports.getSubjects = async (req, res) => {
   try {
-    const { dept } = req.query;
+    const { dept, course, semester } = req.query;
+    const filterCourse = (course || dept || '').trim();
     let query = {};
-    if (dept && dept !== 'All Departments') {
-      query.dept = { $in: [dept, 'All Departments'] };
+
+    if (filterCourse && filterCourse !== 'All' && filterCourse !== 'All Departments') {
+      // Allow flexible match for spaces and casings, e.g. "CyberSecurity" matches "Cyber Security"
+      const cleaned = filterCourse.replace(/[^a-zA-Z0-9]/g, '');
+      const pattern = cleaned ? cleaned.split('').join('\\s*') : filterCourse;
+      const courseRegex = new RegExp(`^${pattern}$`, 'i');
+
+      query.$or = [
+        { course: courseRegex },
+        { dept: { $in: [courseRegex, 'All Departments', 'All'] } },
+        { course: 'All Departments' }
+      ];
     }
-    const subjects = await Subject.find(query).sort({ createdAt: -1 });
+
+    if (semester) {
+      query.semester = Number(semester);
+    }
+
+    const subjects = await Subject.find(query).sort({ code: 1, name: 1, createdAt: -1 });
     res.status(200).json({ success: true, count: subjects.length, data: subjects });
   } catch (error) {
     console.error('Error fetching subjects:', error);
@@ -124,15 +143,20 @@ exports.getSubjectById = async (req, res) => {
 
 exports.createSubject = async (req, res) => {
   try {
-    const { code, name, dept, type } = req.body;
-    if (!code || !name || !dept || !type) {
-      return res.status(400).json({ success: false, message: 'Code, name, dept, and type are required.' });
+    const { code, name, dept, course, semester, type } = req.body;
+    if (!code || !name) {
+      return res.status(400).json({ success: false, message: 'Subject code and name are required.' });
     }
+    const resolvedDept = dept || course || 'All Departments';
+    const resolvedCourse = course || (dept && dept !== 'All Departments' ? dept : '') || '';
+
     const subject = await Subject.create({
       code: code.trim(),
       name: name.trim(),
-      dept,
-      type: type.trim()
+      dept: resolvedDept,
+      course: resolvedCourse,
+      semester: semester ? Number(semester) : undefined,
+      type: (type || 'Core').trim()
     });
     res.status(201).json({ success: true, message: 'Subject created successfully.', data: subject });
   } catch (error) {
@@ -146,14 +170,16 @@ exports.createSubject = async (req, res) => {
 // @access  Private (Admin)
 exports.updateSubject = async (req, res) => {
   try {
-    const { code, name, dept, type } = req.body;
+    const { code, name, dept, course, semester, type } = req.body;
     const subject = await Subject.findById(req.params.id);
     if (!subject) {
       return res.status(404).json({ success: false, message: 'Subject not found.' });
     }
     if (code) subject.code = code.trim();
     if (name) subject.name = name.trim();
-    if (dept) subject.dept = dept;
+    if (dept !== undefined) subject.dept = dept;
+    if (course !== undefined) subject.course = course;
+    if (semester !== undefined) subject.semester = Number(semester);
     if (type) subject.type = type.trim();
 
     await subject.save();

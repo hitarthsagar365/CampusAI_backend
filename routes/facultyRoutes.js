@@ -7,8 +7,10 @@ const {
   updateFaculty,
   deleteFaculty
 } = require('../controllers/facultyController');
+const { getAllocatedSubjects } = require('../controllers/teacherController');
 const { requireRole } = require('../middleware/auth');
 
+router.get('/allocated-subjects', requireRole('faculty', 'teacher', 'admin'), getAllocatedSubjects);
 router.get('/', getFaculty);
 router.get('/:id', getFacultyById);
 router.post('/', requireRole('admin'), createFaculty);

@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const Subject = require('../models/Subject');
 const FacultySubjectAssignment = require('../models/FacultySubjectAssignment');
 const bcrypt = require('bcryptjs');
 
@@ -24,7 +25,8 @@ exports.getFaculty = async (req, res) => {
             { name: searchRegex },
             { username: searchRegex },
             { email: searchRegex },
-            { assignedSubject: searchRegex }
+            { assignedSubject: searchRegex },
+            { 'assignedSubjects.course': searchRegex }
           ]
         }
       ];
@@ -39,7 +41,12 @@ exports.getFaculty = async (req, res) => {
       ? Math.max(0, parseInt(req.query.limit, 10))
       : (req.query.page ? 10 : 0);
 
-    let facultyQuery = User.find(query).sort({ createdAt: -1 });
+    let facultyQuery = User.find(query)
+      .populate({
+        path: 'assignedSubjects.subject',
+        select: '_id name code dept course type'
+      })
+      .sort({ createdAt: -1 });
     if (limit > 0) {
       const skip = (page - 1) * limit;
       facultyQuery = facultyQuery.skip(skip).limit(limit);
@@ -72,6 +79,9 @@ exports.getFacultyById = async (req, res) => {
     const faculty = await User.findOne({
       _id: req.params.id,
       role: { $in: ['faculty', 'teacher'] }
+    }).populate({
+      path: 'assignedSubjects.subject',
+      select: '_id name code dept course type'
     });
     if (!faculty) {
       return res.status(404).json({ success: false, message: 'Faculty member not found.' });
@@ -97,6 +107,7 @@ exports.createFaculty = async (req, res) => {
       classSection,
       section,
       assignedSubject,
+      assignedSubjects,
       password
     } = req.body;
 
@@ -124,6 +135,30 @@ exports.createFaculty = async (req, res) => {
     const resolvedSection = (classSection || section || 'A').trim();
     const resolvedSemester = semester || 'Semester 1';
 
+    // Format assignedSubjects array if provided
+    let formattedSubjects = [];
+    if (Array.isArray(assignedSubjects) && assignedSubjects.length > 0) {
+      formattedSubjects = assignedSubjects.map((as) => ({
+        subject: as.subject?._id || as.subject,
+        semester: Number(as.semester) || 1,
+        course: (as.course || resolvedDept).trim(),
+        classSection: (as.classSection || resolvedSection).trim()
+      }));
+    } else if (assignedSubject && assignedSubject.trim()) {
+      // Find subject doc by name if possible
+      const foundSub = await Subject.findOne({
+        name: new RegExp(`^${assignedSubject.trim()}$`, 'i')
+      });
+      if (foundSub) {
+        formattedSubjects.push({
+          subject: foundSub._id,
+          semester: parseInt(resolvedSemester.replace(/\D/g, ''), 10) || 1,
+          course: resolvedDept,
+          classSection: resolvedSection
+        });
+      }
+    }
+
     // Password hashing
     const pwdToHash = password && password.trim() ? password.trim() : 'Faculty@123';
     const salt = await bcrypt.genSalt(10);
@@ -139,11 +174,37 @@ exports.createFaculty = async (req, res) => {
       classSection: resolvedSection,
       section: resolvedSection,
       assignedSubject: (assignedSubject || '').trim(),
+      assignedSubjects: formattedSubjects,
       passwordHash
     });
 
-    // If an assigned subject is provided, create academic mapping for attendance & marks
-    if (assignedSubject && assignedSubject.trim()) {
+    // Sync to FacultySubjectAssignment for roster and attendance
+    if (formattedSubjects.length > 0) {
+      for (const item of formattedSubjects) {
+        const subDoc = await Subject.findById(item.subject);
+        const subjName = subDoc?.name || assignedSubject || 'Subject';
+        await FacultySubjectAssignment.findOneAndUpdate(
+          {
+            facultyId: faculty._id,
+            subject: subjName,
+            department: item.course || resolvedDept,
+            semester: item.semester,
+            classSection: item.classSection || resolvedSection
+          },
+          {
+            facultyId: faculty._id,
+            facultyName: faculty.name,
+            facultyUsername: faculty.username,
+            department: item.course || resolvedDept,
+            semester: item.semester,
+            classSection: item.classSection || resolvedSection,
+            subject: subjName,
+            status: 'Active'
+          },
+          { upsert: true, new: true }
+        );
+      }
+    } else if (assignedSubject && assignedSubject.trim()) {
       try {
         await FacultySubjectAssignment.findOneAndUpdate(
           {
@@ -195,6 +256,7 @@ exports.updateFaculty = async (req, res) => {
       classSection,
       section,
       assignedSubject,
+      assignedSubjects,
       password
     } = req.body;
 
@@ -233,6 +295,41 @@ exports.updateFaculty = async (req, res) => {
       faculty.section = section.trim();
     }
     if (assignedSubject !== undefined) faculty.assignedSubject = assignedSubject.trim();
+
+    if (Array.isArray(assignedSubjects)) {
+      faculty.assignedSubjects = assignedSubjects.map((as) => ({
+        subject: as.subject?._id || as.subject,
+        semester: Number(as.semester) || 1,
+        course: (as.course || faculty.department || 'AIML').trim(),
+        classSection: (as.classSection || faculty.classSection || 'A').trim()
+      }));
+
+      // Sync updated assignments
+      for (const item of faculty.assignedSubjects) {
+        const subDoc = await Subject.findById(item.subject);
+        const subjName = subDoc?.name || 'Subject';
+        await FacultySubjectAssignment.findOneAndUpdate(
+          {
+            facultyId: faculty._id,
+            subject: subjName,
+            department: item.course,
+            semester: item.semester,
+            classSection: item.classSection
+          },
+          {
+            facultyId: faculty._id,
+            facultyName: faculty.name,
+            facultyUsername: faculty.username,
+            department: item.course,
+            semester: item.semester,
+            classSection: item.classSection,
+            subject: subjName,
+            status: 'Active'
+          },
+          { upsert: true, new: true }
+        );
+      }
+    }
 
     if (password && password.trim()) {
       const salt = await bcrypt.genSalt(10);

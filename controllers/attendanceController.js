@@ -2,6 +2,7 @@ const Attendance = require('../models/Attendance');
 const AttendanceSession = require('../models/AttendanceSession');
 const FacultySubjectAssignment = require('../models/FacultySubjectAssignment');
 const User = require('../models/User');
+const Subject = require('../models/Subject');
 const { normalizeSemester, getSemesterQueryFilter } = require('../utils/academicHelper');
 
 // Helper to format today's date as YYYY-MM-DD in IST
@@ -24,6 +25,40 @@ exports.getMySubjects = async (req, res) => {
     let filter = { status: 'Active' };
 
     if (userRole !== 'admin') {
+      // If user has assignedSubjects array, ensure synced to FacultySubjectAssignment
+      if (Array.isArray(req.user.assignedSubjects) && req.user.assignedSubjects.length > 0) {
+        for (const item of req.user.assignedSubjects) {
+          if (!item || !item.subject) continue;
+          let subjName = item.subjectName;
+          let subjCode = '';
+          if (!subjName) {
+            const sDoc = await Subject.findById(item.subject);
+            subjName = sDoc?.name || 'Subject';
+            subjCode = sDoc?.code || '';
+          }
+          await FacultySubjectAssignment.findOneAndUpdate(
+            {
+              facultyId: req.user._id,
+              subject: subjName,
+              semester: Number(item.semester) || 1,
+              department: item.course || req.user.department || 'AIML'
+            },
+            {
+              facultyId: req.user._id,
+              facultyName: req.user.name,
+              facultyUsername: req.user.username || '',
+              department: item.course || req.user.department || 'AIML',
+              semester: Number(item.semester) || 1,
+              classSection: item.classSection || 'A',
+              subject: subjName,
+              subjectCode: subjCode,
+              status: 'Active'
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          );
+        }
+      }
+
       // Match by facultyId OR facultyName / facultyUsername
       filter.$or = [
         { facultyId: req.user._id },
@@ -67,7 +102,45 @@ exports.getSubjectRoster = async (req, res) => {
     const lectureDate = (date || getTodayIST()).trim();
 
     // 1. Verify Assignment
-    const assignment = await FacultySubjectAssignment.findById(assignmentId);
+    let assignment = await FacultySubjectAssignment.findById(assignmentId);
+    if (!assignment) {
+      // Check if assignmentId is a subdocument ID from assignedSubjects on User/Teacher
+      const user = await User.findOne({
+        $or: [
+          { 'assignedSubjects._id': assignmentId },
+          { _id: assignmentId }
+        ]
+      }).populate('assignedSubjects.subject');
+
+      if (user && Array.isArray(user.assignedSubjects)) {
+        const subDoc = user.assignedSubjects.id ? user.assignedSubjects.id(assignmentId) : user.assignedSubjects.find(s => s._id?.toString() === assignmentId.toString());
+        const target = subDoc || user.assignedSubjects[0];
+        if (target) {
+          const sName = target.subject?.name || target.subjectName || 'Subject';
+          const deptCourse = target.course || user.department || 'AIML';
+          assignment = await FacultySubjectAssignment.findOneAndUpdate(
+            {
+              facultyId: user._id,
+              subject: sName,
+              semester: Number(target.semester) || 1,
+              department: deptCourse
+            },
+            {
+              facultyId: user._id,
+              facultyName: user.name,
+              facultyUsername: user.username || '',
+              department: deptCourse,
+              semester: Number(target.semester) || 1,
+              classSection: target.classSection || 'A',
+              subject: sName,
+              status: 'Active'
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          );
+        }
+      }
+    }
+
     if (!assignment) {
       return res.status(404).json({
         success: false,

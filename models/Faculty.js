@@ -35,6 +35,33 @@ const FacultySchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    // Requirement 1: Allow Multiple Subjects and Semesters for a Single Teacher
+    assignedSubjects: [
+      {
+        subject: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Subject',
+          required: [true, 'Subject reference is required']
+        },
+        semester: {
+          type: Number,
+          required: [true, 'Semester number is required'],
+          min: 1,
+          max: 8
+        },
+        course: {
+          type: String,
+          required: [true, 'Course name is required'],
+          trim: true
+        },
+        classSection: {
+          type: String,
+          trim: true,
+          default: 'A'
+        }
+      }
+    ],
+    // Legacy single assignment fields preserved for backward compatibility
     assignedSubject: {
       type: String,
       default: ''

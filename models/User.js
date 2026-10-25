@@ -74,6 +74,32 @@ const UserSchema = new mongoose.Schema(
       trim: true,
       default: ''
     },
+    // Requirement 1: Allow Multiple Subjects and Semesters for a Single Teacher
+    assignedSubjects: [
+      {
+        subject: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Subject',
+          required: [true, 'Subject reference is required']
+        },
+        semester: {
+          type: Number,
+          required: [true, 'Semester number is required'],
+          min: 1,
+          max: 8
+        },
+        course: {
+          type: String,
+          required: [true, 'Course name is required'],
+          trim: true
+        },
+        classSection: {
+          type: String,
+          trim: true,
+          default: 'A'
+        }
+      }
+    ],
     avatar: {
       type: String,
       default: ''
@@ -108,7 +134,8 @@ UserSchema.methods.toSafeObject = function () {
     course: this.course || '',
     semester: this.semester || '',
     classSection: this.classSection || this.section || '',
-    assignedSubject: this.assignedSubject || '',
+    assignedSubject: this.assignedSubject || (this.assignedSubjects?.[0]?.subject?.name || ''),
+    assignedSubjects: this.assignedSubjects || [],
     avatar: this.avatar || '',
     role: this.role === 'teacher' ? 'faculty' : this.role,
     createdAt: this.createdAt
