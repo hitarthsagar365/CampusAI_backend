@@ -188,6 +188,13 @@ exports.getStudentPerformanceAnalytics = async (req, res) => {
           weakestSubject: { name: 'N/A', percentage: 0, grade: '—' },
           attendance: { percentage: 0, attended: 0, totalSessions: 0, absent: 0 }
         },
+        summary: {
+          cgpa: 0,
+          gpa: 0,
+          overallPercentage: 0,
+          totalSubjects: 0,
+          totalEvaluations: 0
+        },
         currentSemester: '',
         currentSemesterSubjects: [],
         semesterTrends: [],
@@ -240,13 +247,71 @@ exports.getStudentPerformanceAnalytics = async (req, res) => {
     const parsedMarks = rawMarks.map(parseMarkRecord);
 
     // -------------------------------------------------------------------------
-    // Aggregation 1: Key Metric Cards (Top Row)
+    // Aggregation 1: Key Metric Cards & Semester SGPAs
     // -------------------------------------------------------------------------
     const validMarks = parsedMarks.filter((m) => !m.isAbsent);
     const totalObtained = validMarks.reduce((acc, m) => acc + m.numericMarks, 0);
     const totalMax = validMarks.reduce((acc, m) => acc + m.maxMarks, 0);
     const overallPercentage = totalMax > 0 ? Number(((totalObtained / totalMax) * 100).toFixed(1)) : 0;
-    const cgpa = Number((overallPercentage / 9.5).toFixed(2));
+
+    // Calculate Semester-wise Breakdown and SGPAs (strictly bounded to [0, 10.0])
+    const semesterMap = {};
+    for (const m of parsedMarks) {
+      const semKey = m.semester || studentInfo.semester || 'General';
+      if (!semesterMap[semKey]) {
+        semesterMap[semKey] = {
+          semester: semKey,
+          totalObtained: 0,
+          totalMax: 0,
+          examsCount: 0
+        };
+      }
+      if (!m.isAbsent) {
+        semesterMap[semKey].totalObtained += m.numericMarks;
+        semesterMap[semKey].totalMax += m.maxMarks;
+      }
+      semesterMap[semKey].examsCount++;
+    }
+
+    const semesterTrends = Object.values(semesterMap)
+      .map((s) => {
+        const semNum = parseInt(String(s.semester).replace(/\D/g, ''), 10) || 0;
+        const pct = s.totalMax > 0 ? Number(((s.totalObtained / s.totalMax) * 100).toFixed(1)) : 0;
+        // Semester SGPA capped strictly at 10.0 scale using Math.min
+        const rawSgpa = pct > 0 ? Number((pct / 9.5).toFixed(2)) : 0;
+        const sgpa = Number(Math.min(Math.max(rawSgpa, 0), 10.0).toFixed(2));
+        return {
+          semester: s.semester,
+          label: `Sem ${semNum || s.semester}`,
+          semOrder: semNum,
+          percentage: pct,
+          sgpa,
+          totalObtained: s.totalObtained,
+          totalMax: s.totalMax,
+          examsCount: s.examsCount
+        };
+      })
+      .sort((a, b) => a.semOrder - b.semOrder);
+
+    // Calculate CGPA by averaging SGPAs across evaluated semesters (or fallback to overallPercentage)
+    const evaluatedSemesters = semesterTrends.filter((s) => s.totalMax > 0);
+    let calculatedCGPA = 0;
+    if (evaluatedSemesters.length > 0) {
+      const sumSgpa = evaluatedSemesters.reduce((acc, s) => acc + s.sgpa, 0);
+      calculatedCGPA = sumSgpa / evaluatedSemesters.length;
+    } else if (overallPercentage > 0) {
+      calculatedCGPA = overallPercentage / 9.5;
+    }
+
+    // Strictly cap CGPA to 10.0 (and minimum 0.0) rounded to 2 decimal places
+    const cgpa = Number(Math.min(Math.max(calculatedCGPA, 0), 10.0).toFixed(2));
+
+    // Synchronize capped CGPA with student User profile
+    if (studentUser && studentUser.cgpa !== cgpa) {
+      studentUser.cgpa = cgpa;
+      studentUser.gpa = cgpa;
+      studentUser.save().catch(() => {});
+    }
 
     // Strongest & Weakest Subjects aggregation
     const subjectStats = {};
@@ -390,40 +455,6 @@ exports.getStudentPerformanceAnalytics = async (req, res) => {
     // -------------------------------------------------------------------------
     // Aggregation 3: Line Graph (Performance Trend over Past Semesters/Exams)
     // -------------------------------------------------------------------------
-    const semesterMap = {};
-    for (const m of parsedMarks) {
-      const semKey = m.semester || studentInfo.semester || 'General';
-      if (!semesterMap[semKey]) {
-        semesterMap[semKey] = {
-          semester: semKey,
-          totalObtained: 0,
-          totalMax: 0,
-          examsCount: 0
-        };
-      }
-      if (!m.isAbsent) {
-        semesterMap[semKey].totalObtained += m.numericMarks;
-        semesterMap[semKey].totalMax += m.maxMarks;
-      }
-      semesterMap[semKey].examsCount++;
-    }
-
-    const semesterTrends = Object.values(semesterMap)
-      .map((s) => {
-        const semNum = parseInt(String(s.semester).replace(/\D/g, ''), 10) || 0;
-        const pct = s.totalMax > 0 ? Number(((s.totalObtained / s.totalMax) * 100).toFixed(1)) : 0;
-        return {
-          semester: s.semester,
-          label: `Sem ${semNum || s.semester}`,
-          semOrder: semNum,
-          percentage: pct,
-          totalObtained: s.totalObtained,
-          totalMax: s.totalMax,
-          examsCount: s.examsCount
-        };
-      })
-      .sort((a, b) => a.semOrder - b.semOrder);
-
     // If only one semester trend exists, create a granular exam-by-exam trend
     let performanceTrend = semesterTrends;
     if (semesterTrends.length <= 1) {
@@ -520,6 +551,13 @@ exports.getStudentPerformanceAnalytics = async (req, res) => {
           totalSessions: totalAttendanceSessions,
           absent: absentCount
         }
+      },
+      summary: {
+        cgpa,
+        gpa: cgpa,
+        overallPercentage,
+        totalSubjects: Object.keys(subjectStats).length,
+        totalEvaluations: parsedMarks.length
       },
       currentSemester,
       currentSemesterSubjects,

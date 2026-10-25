@@ -103,12 +103,36 @@ const UserSchema = new mongoose.Schema(
     avatar: {
       type: String,
       default: ''
+    },
+    // Academic Performance metrics strictly capped at 10.0 scale
+    cgpa: {
+      type: Number,
+      min: [0, 'CGPA cannot be less than 0.0'],
+      max: [10, 'CGPA cannot exceed 10.0'],
+      default: 0
+    },
+    gpa: {
+      type: Number,
+      min: [0, 'GPA cannot be less than 0.0'],
+      max: [10, 'GPA cannot exceed 10.0'],
+      default: 0
     }
   },
   {
     timestamps: true
   }
 );
+
+// Pre-save validation & clamping to ensure CGPA strictly stays at or below 10.0
+UserSchema.pre('save', function (next) {
+  if (this.cgpa !== undefined && this.cgpa !== null) {
+    this.cgpa = Math.min(Math.max(Number(this.cgpa), 0), 10.0);
+  }
+  if (this.gpa !== undefined && this.gpa !== null) {
+    this.gpa = Math.min(Math.max(Number(this.gpa), 0), 10.0);
+  }
+  next();
+});
 
 // Method to verify password strictly using bcrypt
 UserSchema.methods.matchPassword = async function (enteredPassword) {
@@ -136,6 +160,8 @@ UserSchema.methods.toSafeObject = function () {
     classSection: this.classSection || this.section || '',
     assignedSubject: this.assignedSubject || (this.assignedSubjects?.[0]?.subject?.name || ''),
     assignedSubjects: this.assignedSubjects || [],
+    cgpa: this.cgpa !== undefined && this.cgpa !== null ? Math.min(Math.max(Number(this.cgpa), 0), 10.0) : 0,
+    gpa: this.gpa !== undefined && this.gpa !== null ? Math.min(Math.max(Number(this.gpa), 0), 10.0) : 0,
     avatar: this.avatar || '',
     role: this.role === 'teacher' ? 'faculty' : this.role,
     createdAt: this.createdAt
