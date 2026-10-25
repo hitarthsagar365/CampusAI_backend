@@ -64,9 +64,15 @@ exports.getMaterials = async (req, res) => {
     } else if (userRole === 'faculty' || userRole === 'teacher') {
       const deptMatches = ['All Departments'];
       if (userDept) deptMatches.push(userDept);
+      if (Array.isArray(req.user?.assignedSubjects)) {
+        req.user.assignedSubjects.forEach((as) => {
+          if (as?.course) deptMatches.push(as.course);
+          if (as?.department) deptMatches.push(as.department);
+        });
+      }
 
       query.$or = [
-        { targetDepartment: { $in: deptMatches } },
+        { targetDepartment: { $in: Array.from(new Set(deptMatches)) } },
         { uploadedBy: req.user?.name || 'Faculty' }
       ];
     }

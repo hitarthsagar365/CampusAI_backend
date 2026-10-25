@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Subject = require('../models/Subject');
 const FacultySubjectAssignment = require('../models/FacultySubjectAssignment');
@@ -181,8 +182,14 @@ exports.createFaculty = async (req, res) => {
     // Sync to FacultySubjectAssignment for roster and attendance
     if (formattedSubjects.length > 0) {
       for (const item of formattedSubjects) {
-        const subDoc = await Subject.findById(item.subject);
-        const subjName = subDoc?.name || assignedSubject || 'Subject';
+        let subjName = assignedSubject || 'Subject';
+        if (item.subject && mongoose.Types.ObjectId.isValid(item.subject)) {
+          const subDoc = await Subject.findById(item.subject);
+          if (subDoc?.name) subjName = subDoc.name;
+        } else if (typeof item.subject === 'string' && item.subject.trim()) {
+          const subDoc = await Subject.findOne({ name: new RegExp(`^${item.subject.trim()}$`, 'i') });
+          if (subDoc?.name) subjName = subDoc.name;
+        }
         await FacultySubjectAssignment.findOneAndUpdate(
           {
             facultyId: faculty._id,
@@ -306,8 +313,14 @@ exports.updateFaculty = async (req, res) => {
 
       // Sync updated assignments
       for (const item of faculty.assignedSubjects) {
-        const subDoc = await Subject.findById(item.subject);
-        const subjName = subDoc?.name || 'Subject';
+        let subjName = 'Subject';
+        if (item.subject && mongoose.Types.ObjectId.isValid(item.subject)) {
+          const subDoc = await Subject.findById(item.subject);
+          if (subDoc?.name) subjName = subDoc.name;
+        } else if (typeof item.subject === 'string' && item.subject.trim()) {
+          const subDoc = await Subject.findOne({ name: new RegExp(`^${item.subject.trim()}$`, 'i') });
+          if (subDoc?.name) subjName = subDoc.name;
+        }
         await FacultySubjectAssignment.findOneAndUpdate(
           {
             facultyId: faculty._id,

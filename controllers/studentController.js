@@ -14,43 +14,64 @@ const normalizeSemester = (sem) => {
 // @access  Private
 exports.getStudents = async (req, res) => {
   try {
-    const { department, semester, section, classSection, search } = req.query;
-    let query = { role: 'student' };
+    const { department, semester, section, classSection, division, search } = req.query;
+    const conditions = [{ role: { $in: ['student', 'Student'] } }];
 
+    // 1. Department / Course Filter
     if (department && department !== 'All' && department !== 'All Departments') {
-      query.$or = [
-        { department: new RegExp(`^${department}$`, 'i') },
-        { course: new RegExp(`^${department}$`, 'i') }
-      ];
+      const escapedDept = department.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      conditions.push({
+        $or: [
+          { department: new RegExp(`^${escapedDept}$`, 'i') },
+          { course: new RegExp(`^${escapedDept}$`, 'i') }
+        ]
+      });
     }
 
+    // 2. Semester Filter (matches numeric, string, or "Semester X")
     if (semester && semester !== 'All') {
       const cleanSem = normalizeSemester(semester);
-      query.semester = new RegExp(`^${cleanSem}$`, 'i');
-    }
-
-    const sec = section || classSection;
-    if (sec && sec !== 'All' && sec !== 'General') {
-      query.$or = [
-        { classSection: new RegExp(`^${sec}$`, 'i') },
-        { section: new RegExp(`^${sec}$`, 'i') }
-      ];
-    }
-
-    if (search && search.trim()) {
-      const s = search.trim();
-      const searchRegex = new RegExp(s, 'i');
-      query.$and = [
-        ...(query.$and || []),
-        {
+      if (cleanSem) {
+        conditions.push({
           $or: [
-            { name: searchRegex },
-            { enrollment: searchRegex },
-            { email: searchRegex }
+            { semester: cleanSem },
+            { semester: String(cleanSem) },
+            { semester: `Semester ${cleanSem}` },
+            { semester: new RegExp(`^\\s*(?:semester|sem)?\\s*${cleanSem}\\s*$`, 'i') }
           ]
-        }
-      ];
+        });
+      }
     }
+
+    // 3. Section / Division Filter
+    const sec = (section || classSection || division || '').trim();
+    if (sec && sec !== 'All' && sec !== 'General') {
+      const cleanSec = sec.replace(/^(Section|Division)\s+/i, '').trim();
+      const escapedSec = cleanSec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      conditions.push({
+        $or: [
+          { classSection: new RegExp(`^(?:Section\\s+|Division\\s+)?${escapedSec}$`, 'i') },
+          { section: new RegExp(`^(?:Section\\s+|Division\\s+)?${escapedSec}$`, 'i') },
+          { division: new RegExp(`^(?:Section\\s+|Division\\s+)?${escapedSec}$`, 'i') }
+        ]
+      });
+    }
+
+    // 4. Search Filter
+    if (search && search.trim()) {
+      const escapedSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escapedSearch, 'i');
+      conditions.push({
+        $or: [
+          { name: searchRegex },
+          { enrollment: searchRegex },
+          { email: searchRegex },
+          { username: searchRegex }
+        ]
+      });
+    }
+
+    const query = conditions.length === 1 ? conditions[0] : { $and: conditions };
 
     // Total records count for pagination metadata
     const totalRecords = await User.countDocuments(query);

@@ -1,6 +1,9 @@
 const Mark = require('../models/Mark');
 const User = require('../models/User');
 const nodemailer = require('nodemailer');
+const { normalizeSemester } = require('../utils/academicHelper');
+
+const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // @desc    Get marks / grade records (with optional filters)
 // @route   GET /api/marks
@@ -22,12 +25,25 @@ exports.getMarks = async (req, res) => {
         { student: { $regex: new RegExp(`^${studentEnrollment}$`, 'i') } }
       ];
     } else if (userRole === 'faculty' || userRole === 'teacher') {
-      // Faculty scopes by default to their department / assigned subject
-      if (req.user.assignedSubject && !subject) {
-        query.subject = { $regex: new RegExp(`^${req.user.assignedSubject.trim()}$`, 'i') };
-      }
-      if (req.user.department && !department && req.user.department !== 'All Departments') {
-        query.department = req.user.department;
+      // Faculty scopes by default to their assigned subjects
+      if (!subject) {
+        const allowedSubjects = new Set();
+        if (req.user?.assignedSubject && req.user.assignedSubject.trim()) {
+          allowedSubjects.add(req.user.assignedSubject.trim());
+        }
+        if (Array.isArray(req.user?.assignedSubjects)) {
+          for (const item of req.user.assignedSubjects) {
+            if (item?.subjectName) allowedSubjects.add(item.subjectName.trim());
+            if (item?.subject?.name) allowedSubjects.add(item.subject.name.trim());
+            if (typeof item?.subject === 'string' && item.subject.trim()) {
+              allowedSubjects.add(item.subject.trim());
+            }
+          }
+        }
+        if (allowedSubjects.size > 0) {
+          const regexes = Array.from(allowedSubjects).map((s) => new RegExp(`^${escapeRegex(s)}$`, 'i'));
+          query.subject = { $in: regexes };
+        }
       }
       if (enrollment) {
         query.enrollment = { $regex: new RegExp(enrollment.trim(), 'i') };
@@ -52,12 +68,28 @@ exports.getMarks = async (req, res) => {
       query.exam = { $regex: new RegExp(exam.trim(), 'i') };
     }
 
-    if (department && department !== 'All Departments') {
-      query.department = department;
+    if (department && department !== 'All' && department !== 'All Departments') {
+      const escapedDept = escapeRegex(department.trim());
+      query.department = { $regex: new RegExp(`^${escapedDept}$`, 'i') };
     }
 
-    if (semester) {
-      query.semester = String(semester).trim();
+    if (semester && semester !== 'All') {
+      const semNum = normalizeSemester(semester);
+      if (semNum) {
+        query.semester = {
+          $in: [
+            semNum,
+            String(semNum),
+            `Semester ${semNum}`,
+            `semester ${semNum}`,
+            `Sem ${semNum}`,
+            `Sem-${semNum}`,
+            `sem ${semNum}`
+          ]
+        };
+      } else {
+        query.semester = String(semester).trim();
+      }
     }
 
     if (division && division.toLowerCase() !== 'all') {
@@ -208,12 +240,24 @@ exports.bulkSaveMarks = async (req, res) => {
         });
       }
 
-      // Rule 3: Class Access restricted solely to logged-in Faculty's assigned department
+      // Rule 3: Class Access restricted solely to logged-in Faculty's assigned department / courses
       const userDept = (req.user?.department || '').trim();
-      if (userDept && userDept !== 'All Departments' && department.toLowerCase() !== userDept.toLowerCase()) {
+      const allowedDepts = [userDept];
+      if (Array.isArray(req.user?.assignedSubjects)) {
+        req.user.assignedSubjects.forEach((as) => {
+          if (as?.course) allowedDepts.push(as.course.trim());
+          if (as?.department) allowedDepts.push(as.department.trim());
+        });
+      }
+      const isAllowedDept =
+        !userDept ||
+        userDept === 'All Departments' ||
+        allowedDepts.some((d) => d && d.toLowerCase() === department.trim().toLowerCase());
+
+      if (!isAllowedDept) {
         return res.status(403).json({
           success: false,
-          message: `Access Denied: You are only authorized to evaluate students in your assigned department (${userDept}). Cannot access other departments.`
+          message: `Access Denied: You are only authorized to evaluate students in your assigned departments/courses (${allowedDepts.filter(Boolean).join(', ')}). Cannot access ${department}.`
         });
       }
     }

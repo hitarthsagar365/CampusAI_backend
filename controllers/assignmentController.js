@@ -108,6 +108,8 @@ exports.getAssignments = async (req, res) => {
         conditions.push({
           $or: [
             { semester: userSemester },
+            { semester: String(userSemester) },
+            { semester: `Semester ${userSemester}` },
             { semester: null },
             { semester: { $exists: false } }
           ]

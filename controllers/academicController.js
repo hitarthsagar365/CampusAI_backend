@@ -91,27 +91,35 @@ exports.deleteCourse = async (req, res) => {
 };
 
 // --- SUBJECTS ---
-// @desc    Get all subjects (dynamically filterable by course and semester)
+// @desc    Get all subjects (dynamically filterable by course/department and semester)
 // @route   GET /api/subjects?course=AIML&semester=3
 // @access  Public
 exports.getSubjects = async (req, res) => {
   try {
-    const { dept, course, semester } = req.query;
-    const filterCourse = (course || dept || '').trim();
+    const { dept, course, department, semester } = req.query;
+    const rawCourse = course || dept || department || '';
+    const filterCourse = typeof rawCourse === 'string' ? rawCourse.trim() : '';
     const filterSemester = semester !== undefined && semester !== null ? String(semester).trim() : '';
 
     const conditions = [];
 
-    // 1. Course Filter (e.g. AIML, Cyber Security)
+    // 1. Department / Course Filter (e.g. AIML, Cyber Security)
     if (filterCourse && filterCourse !== 'All' && filterCourse !== 'All Departments') {
+      const escaped = filterCourse.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const cleaned = filterCourse.replace(/[^a-zA-Z0-9]/g, '');
-      const pattern = cleaned ? cleaned.split('').join('\\s*') : filterCourse;
+      const pattern = cleaned ? cleaned.split('').join('\\s*') : escaped;
       const courseRegex = new RegExp(`^${pattern}$`, 'i');
+      const exactRegex = new RegExp(`^${escaped}$`, 'i');
+      const substringRegex = new RegExp(escaped, 'i');
 
       conditions.push({
         $or: [
           { course: courseRegex },
           { dept: courseRegex },
+          { course: exactRegex },
+          { dept: exactRegex },
+          { course: substringRegex },
+          { dept: substringRegex },
           { course: 'All Departments' },
           { dept: 'All Departments' },
           { course: 'All' },
@@ -129,7 +137,7 @@ exports.getSubjects = async (req, res) => {
             { semester: semNum },
             { semester: String(semNum) },
             { semester: `Semester ${semNum}` },
-            { semester: new RegExp(`^\\s*semester\\s*${semNum}\\s*$`, 'i') }
+            { semester: new RegExp(`^\\s*(?:semester|sem)?\\s*${semNum}\\s*$`, 'i') }
           ]
         });
       }
@@ -167,19 +175,25 @@ exports.getSubjectById = async (req, res) => {
 
 exports.createSubject = async (req, res) => {
   try {
-    const { code, name, dept, course, semester, type } = req.body;
+    const { code, name, dept, course, department, semester, type } = req.body;
     if (!code || !name) {
       return res.status(400).json({ success: false, message: 'Subject code and name are required.' });
     }
-    const resolvedDept = dept || course || 'All Departments';
-    const resolvedCourse = course || (dept && dept !== 'All Departments' ? dept : '') || '';
+    const resolvedDept = (dept || course || department || 'All Departments').trim();
+    const resolvedCourse = (course || (department && department !== 'All Departments' ? department : (dept && dept !== 'All Departments' ? dept : '')) || '').trim();
+
+    let resolvedSemester;
+    if (semester !== undefined && semester !== null && semester !== '') {
+      const parsedSem = parseInt(String(semester).replace(/\D/g, ''), 10);
+      if (!isNaN(parsedSem)) resolvedSemester = parsedSem;
+    }
 
     const subject = await Subject.create({
       code: code.trim(),
       name: name.trim(),
       dept: resolvedDept,
       course: resolvedCourse,
-      semester: semester ? Number(semester) : undefined,
+      semester: resolvedSemester,
       type: (type || 'Core').trim()
     });
     res.status(201).json({ success: true, message: 'Subject created successfully.', data: subject });
@@ -194,16 +208,23 @@ exports.createSubject = async (req, res) => {
 // @access  Private (Admin)
 exports.updateSubject = async (req, res) => {
   try {
-    const { code, name, dept, course, semester, type } = req.body;
+    const { code, name, dept, course, department, semester, type } = req.body;
     const subject = await Subject.findById(req.params.id);
     if (!subject) {
       return res.status(404).json({ success: false, message: 'Subject not found.' });
     }
     if (code) subject.code = code.trim();
     if (name) subject.name = name.trim();
-    if (dept !== undefined) subject.dept = dept;
-    if (course !== undefined) subject.course = course;
-    if (semester !== undefined) subject.semester = Number(semester);
+    if (dept !== undefined) subject.dept = dept.trim();
+    if (course !== undefined) subject.course = course.trim();
+    if (department !== undefined) {
+      if (dept === undefined) subject.dept = department.trim();
+      if (course === undefined) subject.course = department.trim();
+    }
+    if (semester !== undefined && semester !== null && semester !== '') {
+      const parsedSem = parseInt(String(semester).replace(/\D/g, ''), 10);
+      if (!isNaN(parsedSem)) subject.semester = parsedSem;
+    }
     if (type) subject.type = type.trim();
 
     await subject.save();

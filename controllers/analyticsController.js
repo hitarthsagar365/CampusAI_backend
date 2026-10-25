@@ -1,5 +1,7 @@
+const mongoose = require('mongoose');
 const Mark = require('../models/Mark');
 const User = require('../models/User');
+const Subject = require('../models/Subject');
 const Attendance = require('../models/Attendance');
 const FacultySubjectAssignment = require('../models/FacultySubjectAssignment');
 
@@ -79,17 +81,60 @@ const parseMarkRecord = (record) => {
 const getFacultyAssignedSubjects = async (user) => {
   const subjectsSet = new Set();
 
-  if (user.assignedSubject && user.assignedSubject.trim()) {
+  if (user?.assignedSubject && user.assignedSubject.trim()) {
     subjectsSet.add(user.assignedSubject.trim());
   }
 
+  // 1. Check user.assignedSubjects array
+  if (Array.isArray(user?.assignedSubjects) && user.assignedSubjects.length > 0) {
+    for (const item of user.assignedSubjects) {
+      if (!item) continue;
+      if (item.subjectName && item.subjectName.trim()) {
+        subjectsSet.add(item.subjectName.trim());
+      }
+      if (item.subject) {
+        if (typeof item.subject === 'object' && item.subject.name) {
+          subjectsSet.add(item.subject.name.trim());
+        } else if (typeof item.subject === 'string' && item.subject.trim()) {
+          if (mongoose.Types.ObjectId.isValid(item.subject)) {
+            const subDoc = await Subject.findById(item.subject).select('name code');
+            if (subDoc?.name) subjectsSet.add(subDoc.name.trim());
+          } else {
+            subjectsSet.add(item.subject.trim());
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Fallback: check User record from DB directly if req.user had unpopulated assignedSubjects
+  if (subjectsSet.size === 0 && user?._id) {
+    const userDoc = await User.findById(user._id).populate('assignedSubjects.subject');
+    if (userDoc) {
+      if (userDoc.assignedSubject && userDoc.assignedSubject.trim()) {
+        subjectsSet.add(userDoc.assignedSubject.trim());
+      }
+      if (Array.isArray(userDoc.assignedSubjects)) {
+        for (const item of userDoc.assignedSubjects) {
+          if (!item) continue;
+          if (item.subjectName) subjectsSet.add(item.subjectName.trim());
+          if (item.subject?.name) subjectsSet.add(item.subject.name.trim());
+          if (typeof item.subject === 'string' && item.subject.trim()) {
+            subjectsSet.add(item.subject.trim());
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Fallback: Check FacultySubjectAssignment
   const assignments = await FacultySubjectAssignment.find({
     $or: [
-      { facultyId: user._id },
-      { facultyUsername: user.username },
-      { facultyName: user.name }
+      { facultyId: user?._id },
+      ...(user?.username ? [{ facultyUsername: user.username }] : []),
+      ...(user?.name ? [{ facultyName: user.name }] : [])
     ],
-    status: 'Active'
+    status: { $ne: 'Inactive' }
   });
 
   for (const a of assignments) {
