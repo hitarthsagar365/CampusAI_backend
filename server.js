@@ -75,6 +75,7 @@ const searchRoutes = require('./routes/searchRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const facultyRoutes = require('./routes/facultyRoutes');
+const aiChatbotRoutes = require('./routes/aiChatbotRoutes');
 
 // Middleware for route protection
 const { protect } = require('./middleware/auth');
@@ -103,6 +104,7 @@ app.use('/api/chat', protect, chatRoutes);
 app.use('/api/courses', protect, courseRoutes);
 app.use('/api/subjects', subjectRoutes);
 app.use('/api/classes', protect, classRoutes);
+app.use('/api/ai-chatbot', protect, aiChatbotRoutes);
 
 // Health check route
 app.get('/api/health', (req, res) => {
