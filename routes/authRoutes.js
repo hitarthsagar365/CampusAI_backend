@@ -12,7 +12,9 @@ const {
   logout,
   logoutAll,
   getStudents,
-  getFaculty
+  getFaculty,
+  forgotPassword,
+  resetPassword
 } = require('../controllers/authController');
 const { uploadProfilePicture } = require('../controllers/profileController');
 const { authMiddleware } = require('../middleware/auth');
@@ -68,6 +70,12 @@ router.route('/login/student')
 
 router.post('/refresh', refresh);
 router.post('/logout', logout);
+
+// Forgot Password & Reset Password public endpoints
+router.post('/forgot-password', forgotPassword);
+router.route('/reset-password/:token')
+  .post(resetPassword)
+  .put(resetPassword);
 
 // Protected routes (require valid JWT access token)
 router.get('/me', authMiddleware, getMe);

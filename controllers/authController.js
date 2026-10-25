@@ -4,6 +4,10 @@ const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Session = require('../models/Session');
 const FacultySubjectAssignment = require('../models/FacultySubjectAssignment');
+const Student = require('../models/Student');
+const Faculty = require('../models/Faculty');
+const Admin = require('../models/Admin');
+const { sendEmail, getPasswordResetTemplate } = require('../utils/sendEmail');
 const { getSemesterQueryFilter, normalizeSemester } = require('../utils/academicHelper');
 
 // Helper to generate a short-lived access JWT
@@ -850,3 +854,234 @@ exports.getFaculty = async (req, res) => {
     });
   }
 };
+
+// @desc    Forgot Password - Request reset link across Student, Faculty, and Admin models
+// @route   POST /api/auth/forgot-password
+// @access  Public
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid registered email address.'
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // 1. Search for provided email across ALL THREE database models: Student, Faculty, and Admin
+    const userModels = [
+      { name: 'Student', model: Student },
+      { name: 'Faculty', model: Faculty },
+      { name: 'Admin', model: Admin }
+    ];
+
+    let user = null;
+    let userRole = null;
+    let MatchedModel = null;
+
+    for (const item of userModels) {
+      if (item.model) {
+        const found = await item.model.findOne({ email: cleanEmail });
+        if (found) {
+          user = found;
+          userRole = item.name;
+          MatchedModel = item.model;
+          break;
+        }
+      }
+    }
+
+    // Fallback: If not found in individual models, check unified User model if present
+    if (!user && User) {
+      const foundInUser = await User.findOne({ email: cleanEmail });
+      if (foundInUser) {
+        user = foundInUser;
+        userRole = foundInUser.role ? (foundInUser.role.charAt(0).toUpperCase() + foundInUser.role.slice(1)) : 'User';
+        MatchedModel = User;
+      }
+    }
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'No account found with this email address across Student, Faculty, or Admin records.'
+      });
+    }
+
+    // 2. Generate a secure, URL-safe random reset token using crypto
+    const rawResetToken = crypto.randomBytes(32).toString('hex');
+
+    // 3. Hash the token with SHA-256 and store on the user document along with 15-minute expiration
+    const hashedResetToken = crypto
+      .createHash('sha256')
+      .update(rawResetToken)
+      .digest('hex');
+
+    const expireTime = Date.now() + 15 * 60 * 1000; // 15 minutes
+
+    user.resetPasswordToken = hashedResetToken;
+    user.resetPasswordExpire = expireTime;
+    await user.save({ validateBeforeSave: false });
+
+    // 4. Construct reset link using FRONTEND_URL: ${process.env.FRONTEND_URL}/reset-password/${resetToken}
+    const frontendBaseUrl = (process.env.FRONTEND_URL || process.env.CLIENT_URL).replace(/\/+$/, '');
+    const resetUrl = `${frontendBaseUrl}/reset-password/${rawResetToken}`;
+
+    // 5. Send email containing reset link via Brevo SMTP
+    const textMessage = `You requested a password reset for your Campus AI (${userRole}) account.\n\nPlease click or open the link below to set a new password:\n${resetUrl}\n\nThis link will expire in 15 minutes.\nIf you did not request this, please disregard this email.`;
+    const htmlMessage = getPasswordResetTemplate(user.name || userRole, resetUrl, 15);
+
+    try {
+      await sendEmail({
+        to: user.email,
+        subject: 'Campus AI - Password Reset Request',
+        text: textMessage,
+        html: htmlMessage
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Password reset link has been sent to your email.'
+      });
+    } catch (emailError) {
+      console.error('Brevo SMTP email sending failed:', emailError);
+
+      // Revert token fields on failure so user is not locked in invalid state
+      user.resetPasswordToken = undefined;
+      user.resetPasswordExpire = undefined;
+      await user.save({ validateBeforeSave: false });
+
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send password reset email. Please ensure Brevo SMTP credentials are valid.'
+      });
+    }
+  } catch (error) {
+    console.error('Error in forgotPassword controller:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error processing password reset.'
+    });
+  }
+};
+
+// @desc    Reset password using token across Student, Faculty, and Admin models
+// @route   POST /api/auth/reset-password/:token
+// @route   PUT /api/auth/reset-password/:token
+// @access  Public
+exports.resetPassword = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { password, confirmPassword } = req.body;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password reset token is required in URL parameters.'
+      });
+    }
+
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a new password.'
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long.'
+      });
+    }
+
+    if (confirmPassword && password !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Passwords do not match.'
+      });
+    }
+
+    // 1. Hash the incoming URL token to compare with the SHA-256 hash stored in DB
+    const hashedResetToken = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
+
+    // 2. Search across ALL THREE database models (Student, Faculty, Admin)
+    const userModels = [
+      { name: 'Student', model: Student },
+      { name: 'Faculty', model: Faculty },
+      { name: 'Admin', model: Admin }
+    ];
+
+    let user = null;
+    let userRole = null;
+    let MatchedModel = null;
+
+    for (const item of userModels) {
+      if (item.model) {
+        const found = await item.model.findOne({
+          resetPasswordToken: hashedResetToken,
+          resetPasswordExpire: { $gt: Date.now() }
+        }).select('+password +passwordHash +resetPasswordToken +resetPasswordExpire');
+
+        if (found) {
+          user = found;
+          userRole = item.name;
+          MatchedModel = item.model;
+          break;
+        }
+      }
+    }
+
+    // Fallback: If not found in individual models, check unified User model
+    if (!user && User) {
+      const foundInUser = await User.findOne({
+        resetPasswordToken: hashedResetToken,
+        resetPasswordExpire: { $gt: Date.now() }
+      }).select('+password +passwordHash +resetPasswordToken +resetPasswordExpire');
+
+      if (foundInUser) {
+        user = foundInUser;
+        userRole = foundInUser.role ? (foundInUser.role.charAt(0).toUpperCase() + foundInUser.role.slice(1)) : 'User';
+        MatchedModel = User;
+      }
+    }
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password reset token is invalid or has expired. Please request a new link.'
+      });
+    }
+
+    // 3. Hash the new password using bcrypt
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // 4. Update that specific user's record and clear reset token & expiration
+    user.password = hashedPassword;
+    user.passwordHash = hashedPassword;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password has been reset successfully! You can now log in with your new password.',
+      role: userRole
+    });
+  } catch (error) {
+    console.error('Error in resetPassword controller:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error resetting password.'
+    });
+  }
+};
+
