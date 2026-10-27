@@ -12,10 +12,12 @@ const {
   logout,
   logoutAll,
   getStudents,
-  getFaculty,
+  getFaculty
+} = require('../controllers/authController');
+const {
   forgotPassword,
   resetPassword
-} = require('../controllers/authController');
+} = require('../controllers/passwordResetController');
 const { uploadProfilePicture } = require('../controllers/profileController');
 const { authMiddleware } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -73,6 +75,7 @@ router.post('/logout', logout);
 
 // Forgot Password & Reset Password public endpoints
 router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 router.route('/reset-password/:token')
   .post(resetPassword)
   .put(resetPassword);
