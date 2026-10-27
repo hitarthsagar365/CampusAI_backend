@@ -111,14 +111,17 @@ const getResetPasswordEmailHtml = ({ resetUrl, userName }) => {
  * Helper to dispatch email via Brevo HTTP API
  */
 const sendBrevoEmail = async ({ toEmail, toName, subject, htmlContent }) => {
-  const brevoApiKey = process.env.BREVO_API_KEY;
+  const brevoApiKey = (process.env.BREVO_API_KEY || '').trim();
 
-  if (!brevoApiKey) {
+  if (!brevoApiKey || brevoApiKey === 'your_brevo_api_key_here') {
     console.warn('[CampusAI Brevo API] WARNING: BREVO_API_KEY environment variable is not set.');
-    throw new Error('BREVO_API_KEY is missing in server environment variables.');
+    throw new Error('BREVO_API_KEY is missing or invalid in server environment variables.');
   }
 
-  const senderEmail = process.env.BREVO_FROM_EMAIL || 'support@campusai.edu';
+  const senderEmail = (process.env.BREVO_FROM_EMAIL || '').trim();
+  if (!senderEmail || senderEmail === 'support@campusai.edu') {
+    throw new Error('BREVO_FROM_EMAIL is not configured with your verified Brevo email.');
+  }
   const senderName = 'CampusAI';
 
   const payload = {
@@ -236,9 +239,13 @@ exports.forgotPassword = async (req, res) => {
         htmlContent: emailHtml
       });
     } catch (emailError) {
+      const detailedMessage =
+        emailError.response?.data?.message ||
+        emailError.message ||
+        'Check your Brevo API key and verified sender email.';
       console.error('[CampusAI Brevo Error]: Failed to send password reset email:', emailError.response?.data || emailError.message);
       return res.status(500).json({
-        message: 'Failed to dispatch password reset email via Brevo. Please check server BREVO_API_KEY configuration.'
+        message: `Brevo Error: ${detailedMessage}`
       });
     }
 
