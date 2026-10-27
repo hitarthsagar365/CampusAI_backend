@@ -1,6 +1,10 @@
 const { Readable } = require('stream');
 const cloudinary = require('../config/cloudinary');
 const User = require('../models/User');
+const Student = require('../models/Student');
+const Faculty = require('../models/Faculty');
+const Teacher = require('../models/Teacher');
+const Admin = require('../models/Admin');
 
 /**
  * Helper to upload buffer to Cloudinary via upload stream
@@ -42,7 +46,7 @@ exports.uploadProfilePicture = async (req, res) => {
     if (!cloudinary) {
       return res.status(500).json({
         success: false,
-        message: 'Cloudinary is not installed or configured. Please run "npm install cloudinary" in the backend directory.'
+        message: 'Cloudinary is not configured. Please verify CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in server environment variables.'
       });
     }
 
@@ -78,6 +82,14 @@ exports.uploadProfilePicture = async (req, res) => {
       { new: true }
     );
 
+    // Sync across specific role collections if present
+    await Promise.allSettled([
+      Student ? Student.findByIdAndUpdate(userId, { avatar: uploadResult.secure_url }) : null,
+      Faculty ? Faculty.findByIdAndUpdate(userId, { avatar: uploadResult.secure_url }) : null,
+      Teacher ? Teacher.findByIdAndUpdate(userId, { avatar: uploadResult.secure_url }) : null,
+      Admin ? Admin.findByIdAndUpdate(userId, { avatar: uploadResult.secure_url }) : null
+    ]);
+
     if (!updatedUser) {
       return res.status(404).json({
         success: false,
@@ -85,11 +97,13 @@ exports.uploadProfilePicture = async (req, res) => {
       });
     }
 
+    const safeUser = typeof updatedUser.toSafeObject === 'function' ? updatedUser.toSafeObject() : updatedUser;
+
     return res.status(200).json({
       success: true,
       message: 'Profile picture updated successfully!',
       avatarUrl: uploadResult.secure_url,
-      user: updatedUser.toSafeObject()
+      user: safeUser
     });
   } catch (error) {
     console.error('Error uploading profile picture:', error);
