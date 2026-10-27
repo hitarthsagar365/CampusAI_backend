@@ -53,7 +53,9 @@ SubjectSchema.pre('save', function (next) {
       this.semester = parsed;
     }
   }
-  next();
+  if (typeof next === 'function') {
+    next();
+  }
 });
 
 module.exports = mongoose.models.Subject || mongoose.model('Subject', SubjectSchema);

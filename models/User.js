@@ -131,7 +131,9 @@ UserSchema.pre('save', function (next) {
   if (this.gpa !== undefined && this.gpa !== null) {
     this.gpa = Math.min(Math.max(Number(this.gpa), 0), 10.0);
   }
-  next();
+  if (typeof next === 'function') {
+    next();
+  }
 });
 
 // Method to verify password strictly using bcrypt

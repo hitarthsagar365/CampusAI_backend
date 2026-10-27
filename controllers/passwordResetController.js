@@ -311,7 +311,19 @@ exports.resetPassword = async (req, res) => {
     if (user) {
       user.passwordHash = hashedPassword;
       user.password = hashedPassword;
-      await user.save();
+      try {
+        await user.save();
+      } catch (saveError) {
+        await User.findByIdAndUpdate(resetRecord.userId, {
+          passwordHash: hashedPassword,
+          password: hashedPassword
+        });
+      }
+    } else {
+      await User.findByIdAndUpdate(resetRecord.userId, {
+        passwordHash: hashedPassword,
+        password: hashedPassword
+      });
     }
 
     // Also update Student / Faculty / Admin documents if separate collections are present

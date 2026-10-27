@@ -114,7 +114,9 @@ PerformanceSchema.pre('save', function (next) {
       }
     });
   }
-  next();
+  if (typeof next === 'function') {
+    next();
+  }
 });
 
 module.exports = mongoose.models.Performance || mongoose.model('Performance', PerformanceSchema);
